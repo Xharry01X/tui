@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "Chatty-Patty"
+version = "0.1.0"
+description = "A terminal-based chat application with system monitoring"
+authors = ["Harry <harhsitsingh50621@gmail.com>"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.8"
+textual = "^0.55.0"
+
+[tool.poetry.scripts]
+chat-app = "src.main:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
