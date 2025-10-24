@@ -1,7 +1,5 @@
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Button, Static
-from textual.containers import Center
-from textual import events
 from pathlib import Path
 import json
 from datetime import datetime
@@ -9,30 +7,45 @@ from datetime import datetime
 
 class ProfileSetup(App):
     def compose(self) -> ComposeResult:
-        yield Center(Static("Create Your Chat Profile", id="title"))
-        yield Center(Input(placeholder="Enter username", id="username"))
-        yield Center(Button("Save Profile", id="save"))
+        yield Static("Create username:")
+        yield Input(placeholder="Username", id="username")
+        yield Button("Save", id="save")
         yield Static(id="message")
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    
+    def on_button_pressed(self, event):
         if event.button.id == "save":
-            username_input = self.query_one("#username")
-            username = username_input.value.strip()
-
+            username = self.query_one("#username").value.strip()
             if not username:
-                self.query_one("#message").update("Please enter a username.")
+                self.query_one("#message").update("Enter username")
                 return
-
+            
             profile_dir = Path.home() / ".chatty_patty"
             profile_dir.mkdir(exist_ok=True)
             
             profile = {
                 "username": username,
-                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "is_online": True
             }
-
+            
             with open(profile_dir / "user_profile.json", "w") as f:
-                json.dump(profile, f)
-
-            self.query_one("#message").update("Profile saved successfully.")
-            self.call_later(self.exit)
+                json.dump(profile, f, indent=2)
+            
+            # Add to all users
+            users_file = profile_dir / "all_users.json"
+            users = []
+            if users_file.exists():
+                with open(users_file, 'r') as f:
+                    users = json.load(f)
+            
+            if not any(u['username'] == username for u in users):
+                users.append(profile)
+                with open(users_file, 'w') as f:
+                    json.dump(users, f, indent=2)
+            
+            self.exit()
+    
+    def on_input_submitted(self, event):
+        if event.input.id == "username":
+            self.query_one("#save").press()
