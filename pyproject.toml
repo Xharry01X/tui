@@ -9,6 +9,7 @@ packages = [{include = "src"}]
 [tool.poetry.dependencies]
 python = "^3.8"
 textual = "^0.55.0"
+websockets = "^13.1"
 
 [tool.poetry.scripts]
 chat-app = "src.main:main"
