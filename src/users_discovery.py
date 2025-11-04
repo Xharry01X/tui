@@ -1,8 +1,7 @@
-# src/users_discovery.py
 from textual.app import App, ComposeResult
 from textual.widgets import Input, Button, Static
 from textual.containers import Container
-from src.utils import load_all_users, get_user_online, get_user_ip_from_server
+from src.utils import load_all_users, get_user_ip_from_server
 import asyncio
 
 
@@ -23,11 +22,16 @@ class UserDirectory(App):
         self.selected_user = None
         self.connected_users = {}  
         
-    async def connect_to_server(self):
-        """Connect to central server to get online users"""
-        online_users = await get_online_users()
-        self.connected_users = {user: True for user in online_users}
-        self.update_list()
+    async def get_online_users_once(self):
+        """Get online users once when app starts"""
+        try:
+            # Quick connection just to get current user list
+            from src.utils import get_online_users
+            online_users = await get_online_users()
+            self.connected_users = {user: True for user in online_users}
+            self.update_list()
+        except:
+            pass
     
     def compose(self) -> ComposeResult:
         yield Static(f"Current User: {self.current_user}", id="current-user")
@@ -43,13 +47,13 @@ class UserDirectory(App):
         yield Static("No user selected", id="status")
     
     def on_mount(self):
+        # Get online users once on startup (no continuous polling)
+        asyncio.create_task(self.get_online_users_once())
         self.update_list()
-        # Start background task to connect to server
-        self.set_interval(10, self.refresh_online_status)
     
     def refresh_online_status(self):
-        """Refresh online status from server"""
-        asyncio.create_task(self.connect_to_server())
+        """Refresh online status - but don't create persistent connection"""
+        asyncio.create_task(self.get_online_users_once())
     
     def update_list(self, search=""):
         users_container = self.query_one("#users")
@@ -62,7 +66,6 @@ class UserDirectory(App):
             return
         
         for user in filtered_users:
-            # Check if user is online from server data
             is_online = user["username"] in self.connected_users
             status = "🟢 Online" if is_online else "🔴 Offline"
             user_widget = ClickableStatic(f"{user['username']} - {status}")
@@ -141,7 +144,7 @@ class UserDirectory(App):
                     self.update_status()
 
 
-# Add CSS for styling (same as before)
+# CSS remains the same
 UserDirectory.CSS = """
 #current-user {
     text-style: bold;

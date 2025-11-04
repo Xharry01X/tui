@@ -1,4 +1,3 @@
-# src/config.py
 import json
 from pathlib import Path
 

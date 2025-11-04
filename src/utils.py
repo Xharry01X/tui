@@ -1,13 +1,14 @@
+# src/utils.py
 import json
 import socket
 import asyncio
 import websockets
 from pathlib import Path
 from datetime import datetime
-from .config import CENTRAL_SERVER_URL, PING_INTERVAL, PING_TIMEOUT
+
 
 def get_local_ip():
-    """Get the local IP address"""
+    """Get the local IP address of the machine"""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -17,62 +18,73 @@ def get_local_ip():
     except:
         return "127.0.0.1"
 
-async def register_with_server(username, ip, server_url=CENTRAL_SERVER_URL):
-    """Register user with central server"""
+
+async def register_with_server(username, ip, server_url="ws://localhost:8765"):
+    """Register user with central server and keep connection alive"""
     try:
-        print(f"🔗 Connecting to central server at {server_url}...")
-        async with websockets.connect(
-            server_url, 
-            ping_interval=PING_INTERVAL, 
-            ping_timeout=PING_TIMEOUT
-        ) as websocket:
+        async with websockets.connect(server_url) as websocket:
+            # Register with server
             register_message = {
                 "type": "register",
                 "username": username,
                 "ip": ip
             }
             await websocket.send(json.dumps(register_message))
-            print(f"✅ Successfully registered with central server")
+            print(f"✅ Registered with central server: {username} ({ip})")
+            
+            # KEEP CONNECTION ALIVE - listen for messages
+            async for message in websocket:
+                data = json.loads(message)
+                
+                if data["type"] == "ping":
+                    # Respond to server pings to keep connection alive
+                    await websocket.send(json.dumps({"type": "pong"}))
+                elif data["type"] == "user_list":
+                    # Optional: handle user list updates
+                    pass
+                    
             return True
     except Exception as e:
         print(f"❌ Could not connect to central server: {e}")
         return False
 
 
-async def get_user_ip_from_server(target_username, server_url=CENTRAL_SERVER_URL):
-    """Get the IP address of a user from the server"""
+async def get_user_ip_from_server(target_username, server_url="ws://localhost:8765"):
+    """Get IP address of a user from server"""
     try:
         async with websockets.connect(server_url) as websocket:
-            get_ip_message = {
+            request = {
                 "type": "get_ip",
-                "username": target_username
+                "target": target_username
             }
-
-            await websocket.send(json.dumps(get_ip_message))
+            await websocket.send(json.dumps(request))
+            
             response = await websocket.recv()
             data = json.loads(response)
-
+            
             if data["type"] == "ip_response" and "ip" in data:
                 return data["ip"]
             else:
                 return None
     except Exception as e:
-        print(f"Error getting user IP from server: {e}")
+        print(f"Error getting IP from server: {e}")
         return None
 
-async def get_user_online(server_url=CENTRAL_SERVER_URL):
-    """Get the online status of a user from the server"""
 
+async def get_online_users(server_url="ws://localhost:8765"):
+    """Get list of online users from server"""
     try:
         async with websockets.connect(server_url) as websocket:
+            # Listen for user list updates
             async for message in websocket:
                 data = json.loads(message)
                 if data["type"] == "user_list":
                     return data["users"]
-                return []
+            return []
     except Exception as e:
-        print(f"Error getting user online from server: {e}")
+        print(f"Error getting online users: {e}")
         return []
+
 
 def get_profile_path():
     """Get the profile directory path"""
