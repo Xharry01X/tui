@@ -1,145 +1,135 @@
 # src/utils.py
-import json
-import socket
 import asyncio
-import websockets
-from pathlib import Path
+import json
+import logging
+import socket
 from datetime import datetime
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+SERVER_HOST = "127.0.0.1"
+SERVER_PORT = 9999
+BUFFER_SIZE = 4096
 
 
-def get_local_ip():
-    """Get the local IP address of the machine"""
+def get_local_ip() -> str:
+    """Get the local IP address of the machine."""
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
         ip = s.getsockname()[0]
         s.close()
+        logger.debug("Local IP resolved: %s", ip)
         return ip
-    except:
+    except Exception:
+        logger.warning("Could not determine local IP, falling back to 127.0.0.1")
         return "127.0.0.1"
 
 
-async def register_with_server(username, ip, server_url="ws://localhost:8765"):
-    """Register user with central server and keep connection alive"""
-    try:
-        async with websockets.connect(server_url) as websocket:
-            # Register with server
-            register_message = {
-                "type": "register",
-                "username": username,
-                "ip": ip
-            }
-            await websocket.send(json.dumps(register_message))
-            print(f"✅ Registered with central server: {username} ({ip})")
-            
-            # KEEP CONNECTION ALIVE - listen for messages
-            async for message in websocket:
-                data = json.loads(message)
-                
-                if data["type"] == "ping":
-                    # Respond to server pings to keep connection alive
-                    await websocket.send(json.dumps({"type": "pong"}))
-                elif data["type"] == "user_list":
-                    # Optional: handle user list updates
-                    pass
-                    
-            return True
-    except Exception as e:
-        print(f"❌ Could not connect to central server: {e}")
-        return False
-
-
-async def get_user_ip_from_server(target_username, server_url="ws://localhost:8765"):
-    """Get IP address of a user from server"""
-    try:
-        async with websockets.connect(server_url) as websocket:
-            request = {
-                "type": "get_ip",
-                "target": target_username
-            }
-            await websocket.send(json.dumps(request))
-            
-            response = await websocket.recv()
-            data = json.loads(response)
-            
-            if data["type"] == "ip_response" and "ip" in data:
-                return data["ip"]
-            else:
-                return None
-    except Exception as e:
-        print(f"Error getting IP from server: {e}")
-        return None
-
-
-async def get_online_users(server_url="ws://localhost:8765"):
-    """Get list of online users from server"""
-    try:
-        async with websockets.connect(server_url) as websocket:
-            # Listen for user list updates
-            async for message in websocket:
-                data = json.loads(message)
-                if data["type"] == "user_list":
-                    return data["users"]
-            return []
-    except Exception as e:
-        print(f"Error getting online users: {e}")
-        return []
-
-
-def get_profile_path():
-    """Get the profile directory path"""
+def get_profile_path() -> Path:
+    """Get (and create if needed) the profile directory path."""
     profile_dir = Path.home() / ".chatty_patty"
     profile_dir.mkdir(exist_ok=True)
     return profile_dir
 
 
-def load_user_profile():
-    """Load user profile from file"""
+def load_user_profile() -> dict | None:
+    """Load user profile from disk. Returns dict or None if not found."""
     profile_file = get_profile_path() / "user_profile.json"
     if profile_file.exists():
-        with open(profile_file, 'r') as f:
-            return json.load(f)
+        with open(profile_file, "r") as f:
+            profile = json.load(f)
+        logger.debug("User profile loaded for '%s'", profile.get("username"))
+        return profile
+    logger.debug("No user profile found at %s", profile_file)
     return None
 
 
-def save_user_profile(username, ip=None):
-    """Save user profile to file"""
+def save_user_profile(username: str, ip: str | None = None) -> dict:
+    """Save user profile to disk and append to the all-users directory."""
     if ip is None:
         ip = get_local_ip()
-    
     profile_dir = get_profile_path()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     profile_data = {
         "username": username,
         "ip": ip,
-        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "last_seen": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "is_online": True
+        "created_at": now,
+        "last_seen": now,
+        "is_online": True,
     }
-    
-    # Save user profile
-    with open(profile_dir / "user_profile.json", "w") as f:
+    # Save individual profile
+    profile_file = profile_dir / "user_profile.json"
+    with open(profile_file, "w") as f:
         json.dump(profile_data, f, indent=2)
-    
-    # Add to all users directory
+    logger.info("Profile saved for '%s' @ %s", username, ip)
+
+    # Append to all-users directory if not already present
     users_file = profile_dir / "all_users.json"
     users = []
     if users_file.exists():
-        with open(users_file, 'r') as f:
+        with open(users_file, "r") as f:
             users = json.load(f)
-    
-    # Check if username already exists
-    if not any(u['username'] == username for u in users):
+
+    if not any(u["username"] == username for u in users):
         users.append(profile_data)
-        with open(users_file, 'w') as f:
+        with open(users_file, "w") as f:
             json.dump(users, f, indent=2)
-    
+        logger.debug("'%s' added to all_users.json", username)
+    else:
+        logger.debug("'%s' already exists in all_users.json, skipping.", username)
+
     return profile_data
 
 
-def load_all_users():
-    """Load all users from the local database"""
+def load_all_users() -> list:
+    """Load all known users from the local database."""
     users_file = get_profile_path() / "all_users.json"
     if users_file.exists():
-        with open(users_file, 'r') as f:
-            return json.load(f)
+        with open(users_file, "r") as f:
+            users = json.load(f)
+        logger.debug("Loaded %d users from all_users.json", len(users))
+        return users
+    logger.debug("all_users.json not found, returning empty list.")
     return []
+
+
+async def get_online_users() -> list[str]:
+    """
+    Query the central server for the list of currently online users.
+    Returns a list of usernames that are currently connected.
+    """
+    try:
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(SERVER_HOST, SERVER_PORT), timeout=5.0
+        )
+
+        # Send query request
+        query_msg = json.dumps({"type": "query_users"}) + "\n"
+        writer.write(query_msg.encode("utf-8"))
+        await writer.drain()
+
+        # Read response
+        response_data = await asyncio.wait_for(reader.read(BUFFER_SIZE), timeout=5.0)
+
+        if response_data:
+            response = json.loads(response_data.decode("utf-8").strip())
+            online_users = response.get("users", [])
+            logger.debug("Retrieved %d online users from server", len(online_users))
+
+            writer.close()
+            await writer.wait_closed()
+
+            return online_users
+
+        writer.close()
+        await writer.wait_closed()
+        return []
+
+    except (ConnectionRefusedError, asyncio.TimeoutError) as e:
+        logger.warning("Failed to query online users: %s", e)
+        return []
+    except Exception as e:
+        logger.error("Error querying online users: %s", e)
+        return []
