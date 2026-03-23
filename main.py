@@ -145,7 +145,7 @@ class Game(App):  # type: ignore[type-arg]
 
         Args:
             server (str): Full WebSocket URL of the signaling server
-                          (e.g. "ws://localhost:8080").
+                          (e.g. "ws://hurricane:8080").
         """
         super().__init__()
         self.server = server
@@ -611,10 +611,10 @@ def main() -> None:
 
     CLI Args:
         --server (str): WebSocket URL of the signaling server.
-                        Defaults to "ws://localhost:8080".
+                        Defaults to "ws://hurricane:8080".
     """
     ap = argparse.ArgumentParser(description="ASCII Tag Game")
-    ap.add_argument("--server", default="ws://localhost:8080", metavar="URL")
+    ap.add_argument("--server", default="ws://hurricane:8080", metavar="URL")
     args = ap.parse_args()
     log.debug("=== start server=%s ===", args.server)
     Game(args.server).run()
