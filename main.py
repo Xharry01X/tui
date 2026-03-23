@@ -601,6 +601,119 @@ class Game(App):  # type: ignore[type-arg]
             log.debug("_recv_loop ended")
 
 
+def _port_open(ip: str, port: int, timeout: float = 0.3) -> bool:
+    """Return True if a TCP connection to ip:port succeeds within timeout."""
+    try:
+        s = socket.create_connection((ip, port), timeout=timeout)
+        s.close()
+        return True
+    except OSError:
+        return False
+
+
+def _subnet_scan(port: int) -> Optional[str]:
+    """
+    Scan every host on the local /24 subnet for an open port.
+
+    Derives the subnet from the machine's own outbound IP, then probes
+    all 254 host addresses concurrently using threads. Returns the first
+    IP that responds, or None if none do.
+
+    Args:
+        port (int): TCP port to probe on each host.
+
+    Returns:
+        Optional[str]: First responding IP address, or None.
+    """
+    my_ip = local_ip()
+    prefix = ".".join(my_ip.split(".")[:3])
+    log.debug("subnet_scan: probing %s.1-254:%d", prefix, port)
+    print(f"  Scanning {prefix}.0/24 for port {port}...", flush=True)
+
+    found: list = []
+
+    def probe(i: int) -> None:
+        ip = f"{prefix}.{i}"
+        if ip != my_ip and _port_open(ip, port):
+            found.append(ip)
+
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=64) as ex:
+        list(ex.map(probe, range(1, 255)))
+
+    if found:
+        log.debug("subnet_scan: found %s", found[0])
+        return found[0]
+    return None
+
+
+def resolve_server(url: str) -> str:
+    """
+    Resolve the signaling server URL, auto-discovering the IP if needed.
+
+    Tries each strategy in order and returns the first URL that leads to
+    a reachable host:
+
+      1. Original URL as-is (hostname may resolve via DNS / hosts file).
+      2. mDNS variant — appends '.local' to the hostname, which works on
+         Windows when Bonjour / Apple services are installed.
+      3. Subnet scan — probes every address on the local /24 for the port,
+         no configuration required.
+
+    Exits with an error only if all three strategies fail.
+
+    Args:
+        url (str): WebSocket URL supplied by the user or default, e.g.
+                   "ws://hurricane:8080".
+
+    Returns:
+        str: A working WebSocket URL with a numeric or resolvable host.
+    """
+    import urllib.parse
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    port = parsed.port or 8080
+
+    # 1. Try as-is
+    try:
+        infos = socket.getaddrinfo(host, port)
+        ip = infos[0][4][0]
+        if _port_open(ip, port):
+            log.debug("resolve_server: '%s' resolved and reachable", host)
+            return url
+        log.debug("resolve_server: '%s' resolves but port %d closed", host, port)
+    except socket.gaierror:
+        log.debug("resolve_server: '%s' DNS failed, trying mDNS", host)
+
+    # 2. Try mDNS  (<hostname>.local — works on Windows with Bonjour)
+    mdns_host = f"{host}.local"
+    try:
+        infos = socket.getaddrinfo(mdns_host, port)
+        ip = infos[0][4][0]
+        if _port_open(ip, port):
+            mdns_url = url.replace(f"://{host}:", f"://{mdns_host}:", 1)
+            log.debug("resolve_server: mDNS hit → %s", mdns_url)
+            print(f"  Found server via mDNS: {mdns_host}", flush=True)
+            return mdns_url
+    except socket.gaierror:
+        log.debug("resolve_server: mDNS '%s' also failed, trying subnet scan", mdns_host)
+
+    # 3. Subnet scan
+    print(f"  Hostname '{host}' not resolvable — auto-discovering server...", flush=True)
+    found_ip = _subnet_scan(port)
+    if found_ip:
+        discovered_url = url.replace(f"://{host}", f"://{found_ip}", 1)
+        log.debug("resolve_server: subnet scan → %s", discovered_url)
+        print(f"  Server found at {found_ip}", flush=True)
+        return discovered_url
+
+    print(
+        f"\nCould not find the signaling server on the local network.\n"
+        f"Make sure the server is running and on the same Wi-Fi/LAN.\n"
+    )
+    sys.exit(1)
+
+
 def main() -> None:
     """
     Parse command-line arguments and launch the ASCII Tag game application.
@@ -616,8 +729,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="ASCII Tag Game")
     ap.add_argument("--server", default="ws://hurricane:8080", metavar="URL")
     args = ap.parse_args()
-    log.debug("=== start server=%s ===", args.server)
-    Game(args.server).run()
+    server_url = resolve_server(args.server)
+    log.debug("=== start server=%s ===", server_url)
+    Game(server_url).run()
 
 
 if __name__ == "__main__":
